@@ -54,6 +54,27 @@ mark { padding: 0 .1em; color: #3a2414; background: #f1d486; border-radius: 2px;
 .scene-slug-input { width: min(720px, 100%); margin-top: 3px; padding: 3px 0; color: #28241f; background: transparent; border: 0; border-bottom: 1px dashed transparent; font-size: clamp(30px, 4vw, 48px); font-weight: 780; letter-spacing: -.035em; outline: none; }
 .scene-slug-input:focus { border-bottom-color: #7b4b2a; }
 .editor-paper { padding: 22px; border: 1px solid #d8d0c4 !important; border-radius: 13px !important; }
+.edit-context { display: flex; gap: 12px; align-items: flex-start; padding: 14px 18px; border: 1px dashed #c4a887 !important; border-radius: 12px !important; background: #f6efe2 !important; }
+.edit-context .MuiFormLabel-root { font-size: 12px; }
+.field-flash { animation: field-flash 1.6s ease; }
+@keyframes field-flash {
+  0%, 35% { box-shadow: 0 0 0 3px rgba(199,122,34,.55); border-color: #c77a22 !important; }
+  100% { box-shadow: 0 0 0 0 rgba(199,122,34,0); }
+}
+.edit-history .edit-entry-list { display: grid; gap: 12px; margin-top: 16px; }
+.edit-entry { padding: 13px 15px; border: 1px solid #e1d9cd; border-radius: 10px; background: #faf7f0; }
+.edit-entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.edit-entry-head strong { color: #5f3c22; font-size: 14px; }
+.edit-entry-head small { color: #958b80; }
+.edit-reason { margin-top: 4px !important; color: #4c443b; }
+.change-list { display: grid; gap: 5px; margin-top: 9px; }
+.change-item { display: grid; grid-template-columns: 92px minmax(90px, 1fr) 18px minmax(90px, 1fr); gap: 9px; align-items: center; font-size: 12.5px; }
+.change-item .MuiChip-root { justify-self: start; cursor: pointer; }
+.change-jump:hover { background: #e8dcc9; }
+@media (max-width: 720px) {
+  .edit-context { flex-direction: column; }
+  .change-item { grid-template-columns: 1fr; gap: 2px; }
+}
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 14px; margin-top: 18px; }
 .form-grid .span-2 { grid-column: span 2; }
 .relation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 18px; }

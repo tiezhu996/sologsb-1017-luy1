@@ -38,5 +38,31 @@ export const sampleScript: Script = {
       id: 'scene-4', number: '4', slug: '灯塔·黎明', synopsis: '乔叔交出铜钥匙，苏遥确认录音经过剪辑。', intExt: 'EXT', location: '北岬灯塔', dayNight: '清晨', storyTime: '第 2 天 05:30', pageLength: 3.5,
       characterIds: ['char-lin', 'char-su', 'char-qiao'], propIds: ['prop-key', 'prop-recorder'], costumes: { 'char-lin': 'ward-lin-shirt', 'char-su': 'ward-su-coat', 'char-qiao': 'ward-qiao-raincoat' }, revision: 'yellow', status: 'review', reason: '呈现人物做最终决定的动作，而非对白解释。'
     }
+  ],
+  editLog: [
+    {
+      id: 'edit-seed-1',
+      sceneId: 'scene-3',
+      sceneNumber: '3',
+      time: '2026-09-23T10:42:00.000Z',
+      author: '林简',
+      reason: '合并原第 3、4 场，避免重复解释。',
+      changes: [
+        { field: 'synopsis', label: '摘要', before: '两人分头核对船票与时刻表。', after: '两人核对船票，发现日期与海难发生日不吻合。' },
+        { field: 'propIds', label: '出场道具', before: '旧船票', after: '旧船票、银色录音笔' }
+      ]
+    },
+    {
+      id: 'edit-seed-2',
+      sceneId: 'scene-4',
+      sceneNumber: '4',
+      time: '2026-09-24T15:06:00.000Z',
+      author: '林简',
+      reason: '乔叔提前到灯塔，调整场次顺序衔接黎明。',
+      changes: [
+        { field: 'order', label: '顺序', before: '第 5 场', after: '第 4 场' },
+        { field: 'storyTime', label: '故事时间', before: '第 2 天 06:40', after: '第 2 天 05:30' }
+      ]
+    }
   ]
 }

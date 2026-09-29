@@ -52,6 +52,24 @@ export interface Script {
   characters: Character[]
   props: Prop[]
   wardrobes: Wardrobe[]
+  editLog: SceneEditEntry[]
+}
+
+export interface SceneEditChange {
+  field: string
+  label: string
+  before: string
+  after: string
+}
+
+export interface SceneEditEntry {
+  id: string
+  sceneId: string
+  sceneNumber: string
+  time: string
+  author: string
+  reason: string
+  changes: SceneEditChange[]
 }
 
 export interface WarningItem {
