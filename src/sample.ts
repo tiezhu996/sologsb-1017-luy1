@@ -21,6 +21,7 @@ export const sampleScript: Script = {
     { id: 'ward-su-coat', characterId: 'char-su', name: '卡其风衣', timePeriods: ['夜', '清晨', '白天'], note: '右肩背录音包。' },
     { id: 'ward-qiao-raincoat', characterId: 'char-qiao', name: '橙色雨衣', timePeriods: ['夜', '清晨'], note: '用于防雨，不用于晴天。' }
   ],
+  sceneEdits: [],
   scenes: [
     {
       id: 'scene-1', number: '1', slug: '堤岸·雨夜', synopsis: '林默准备卖掉旧船，苏遥带着一盘匿名录音出现。', intExt: 'EXT', location: '旧渔港堤岸', dayNight: '夜', storyTime: '第 1 天 22:40', pageLength: 2.25,

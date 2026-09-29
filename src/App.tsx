@@ -31,8 +31,10 @@ import {
 import {
   Add,
   Block,
+  Check,
   CheckCircle,
   Close,
+  History,
   Storage,
   Difference,
   Keyboard,
@@ -46,7 +48,8 @@ import {
   WarningAmber
 } from '@mui/icons-material'
 import { diffScript, useContinuityStore } from './store'
-import type { RevisionColor, Scene, WarningItem, WarningStatus } from './types'
+import { FIELD_LABELS, displayValue, editsForScene } from './history'
+import type { RevisionColor, Scene, SceneEditChange, WarningItem, WarningStatus } from './types'
 
 const revisionOptions: Array<{ value: RevisionColor; label: string; color: string }> = [
   { value: 'white', label: '白纸', color: '#f7f5ee' },
@@ -68,6 +71,21 @@ function Highlight({ text, query }: { text: string; query: string }) {
   const index = text.toLowerCase().indexOf(query.toLowerCase())
   if (index < 0) return <>{text}</>
   return <>{text.slice(0, index)}<mark>{text.slice(index, index + query.length)}</mark>{text.slice(index + query.length)}</>
+}
+
+const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+function ChangeChip({ change, onJump }: { change: SceneEditChange; onJump: (field: SceneEditChange['field']) => void }) {
+  return (
+    <button type="button" className="change-chip" onClick={() => onJump(change.field)} title={`${FIELD_LABELS[change.field]}：${displayValue(change.before)} → ${displayValue(change.after)}`}>
+      <span className="change-chip-label">{FIELD_LABELS[change.field]}</span>
+      <span className="change-chip-values">
+        <span className="change-before">{displayValue(change.before)}</span>
+        <span className="change-arrow">→</span>
+        <span className="change-after">{displayValue(change.after)}</span>
+      </span>
+    </button>
+  )
 }
 
 function SceneCard({ scene, query, active, onOpen }: { scene: Scene; query: string; active: boolean; onOpen: () => void }) {
@@ -116,9 +134,14 @@ export default function App() {
   const [warningFilter, setWarningFilter] = useState<'all' | WarningStatus>('all')
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
   const [shortcutOpen, setShortcutOpen] = useState(false)
+  const [reasonDrafts, setReasonDrafts] = useState<Record<string, string>>({})
+  const [flashField, setFlashField] = useState<SceneEditChange['field'] | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   const selectedScene = state.script.scenes.find((scene) => scene.id === selectedSceneId) ?? state.script.scenes[0]
+  const sceneEdits = useMemo(() => selectedScene ? editsForScene(state.script, selectedScene.id) : [], [state.script, selectedScene])
+  const openEdit = sceneEdits.find((entry) => entry.open)
+  const reasonDraft = openEdit?.reason ?? (selectedScene ? reasonDrafts[selectedScene.id] ?? '' : '')
   const pendingWarnings = warnings.filter((warning) => (state.reviews[warning.id]?.status ?? 'pending') === 'pending')
   const visibleWarnings = warnings.filter((warning) => warningFilter === 'all' || (state.reviews[warning.id]?.status ?? 'pending') === warningFilter)
   const selectedVersion = state.versions.find((version) => version.id === selectedVersionId) ?? state.versions[0]
@@ -157,7 +180,7 @@ export default function App() {
         setQuery('')
       } else if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && selectedScene) {
         event.preventDefault()
-        store.moveScene(selectedScene.id, event.key === 'ArrowUp' ? -1 : 1)
+        store.moveScene(selectedScene.id, event.key === 'ArrowUp' ? -1 : 1, reasonDrafts[selectedScene.id] ?? '')
       } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
         const index = state.script.scenes.findIndex((scene) => scene.id === selectedScene?.id)
@@ -170,11 +193,43 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeydown)
     return () => window.removeEventListener('keydown', onKeydown)
-  }, [selectedScene, state.script.scenes, store])
+  }, [selectedScene, state.script.scenes, store, reasonDrafts])
 
   function openScene(sceneId: string) {
+    if (selectedSceneId && selectedSceneId !== sceneId) store.finalizeSceneEdit(selectedSceneId)
     setSelectedSceneId(sceneId)
     setView('detail')
+  }
+
+  function setSceneReason(value: string) {
+    if (!selectedScene) return
+    setReasonDrafts((previous) => ({ ...previous, [selectedScene.id]: value }))
+    store.setEditReason(selectedScene.id, value)
+  }
+
+  function finishSceneEdit() {
+    if (!selectedScene) return
+    store.finalizeSceneEdit(selectedScene.id)
+    setReasonDrafts((previous) => ({ ...previous, [selectedScene.id]: '' }))
+  }
+
+  useEffect(() => {
+    if (!flashField) return
+    const target = document.querySelector(`[data-edit-field="${flashField}"]`)
+    target?.classList.add('field-flash')
+    const timer = window.setTimeout(() => target?.classList.remove('field-flash'), 1600)
+    return () => {
+      window.clearTimeout(timer)
+      target?.classList.remove('field-flash')
+    }
+  }, [flashField])
+
+  function jumpToField(field: SceneEditChange['field']) {
+    setFlashField(null)
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-edit-field="${field}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setFlashField(field)
+    })
   }
 
   function createVersion() {
@@ -216,7 +271,8 @@ export default function App() {
               value={selectedScene.slug}
               disabled={locked}
               aria-label="场景名"
-              onChange={(event) => store.updateScene(selectedScene.id, 'slug', event.target.value)}
+              data-edit-field="slug"
+              onChange={(event) => store.updateScene(selectedScene.id, 'slug', event.target.value, reasonDraft)}
             />
             <Stack direction="row" gap={1} mt={1} flexWrap="wrap">
               <Chip label={`${sceneWarnings.length} 条检查`} color={sceneWarnings.length ? 'warning' : 'success'} size="small" />
@@ -225,9 +281,9 @@ export default function App() {
               {locked && <Chip icon={<Block />} label="场景已锁定" size="small" />}
             </Stack>
           </Box>
-          <Stack direction="row" gap={1} flexWrap="wrap">
-            <Button variant="outlined" onClick={() => store.moveScene(selectedScene.id, -1)}>上移</Button>
-            <Button variant="outlined" onClick={() => store.moveScene(selectedScene.id, 1)}>下移</Button>
+          <Stack direction="row" gap={1} flexWrap="wrap" data-edit-field="order">
+            <Button variant="outlined" onClick={() => store.moveScene(selectedScene.id, -1, reasonDraft)}>上移</Button>
+            <Button variant="outlined" onClick={() => store.moveScene(selectedScene.id, 1, reasonDraft)}>下移</Button>
             <Button color="error" onClick={() => { store.deleteScene(selectedScene.id); setView('outline') }}>删除</Button>
           </Stack>
         </Stack>
@@ -242,26 +298,43 @@ export default function App() {
         <Paper className="editor-paper" elevation={0}>
           <Typography variant="h6">场次信息</Typography>
           <Box className="form-grid">
-            <TextField label="场号" value={selectedScene.number} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'number', event.target.value)} />
-            <TextField select label="内外景" value={selectedScene.intExt} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'intExt', event.target.value as Scene['intExt'])}>
-              {['INT', 'EXT', 'INT/EXT'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
-            </TextField>
-            <TextField label="地点" value={selectedScene.location} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'location', event.target.value)} />
-            <TextField select label="日夜" value={selectedScene.dayNight} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'dayNight', event.target.value)}>
-              {dayNightOptions.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
-            </TextField>
-            <TextField label="故事时间" value={selectedScene.storyTime} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'storyTime', event.target.value)} />
-            <TextField type="number" label="页数" value={selectedScene.pageLength} disabled={locked} inputProps={{ step: 0.25, min: 0 }} onChange={(event) => store.updateScene(selectedScene.id, 'pageLength', Number(event.target.value))} />
-            <TextField select label="场次状态" value={selectedScene.status} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'status', event.target.value as Scene['status'])}>
-              <MenuItem value="draft">草稿</MenuItem>
-              <MenuItem value="review">待审</MenuItem>
-              <MenuItem value="locked">锁定</MenuItem>
-            </TextField>
-            <TextField select label="修订颜色" value={selectedScene.revision} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'revision', event.target.value as RevisionColor)}>
-              {revisionOptions.map((option) => <MenuItem key={option.value} value={option.value}><span className={`revision-swatch revision-${option.value}`} />{option.label}</MenuItem>)}
-            </TextField>
-            <TextField className="span-2" multiline minRows={3} label="场景摘要" value={selectedScene.synopsis} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'synopsis', event.target.value)} />
-            <TextField className="span-2" multiline minRows={2} label="修改理由 / 作者说明" value={selectedScene.reason} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'reason', event.target.value)} />
+            <Box data-edit-field="number">
+              <TextField fullWidth label="场号" value={selectedScene.number} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'number', event.target.value, reasonDraft)} />
+            </Box>
+            <Box data-edit-field="intExt">
+              <TextField fullWidth select label="内外景" value={selectedScene.intExt} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'intExt', event.target.value as Scene['intExt'], reasonDraft)}>
+                {['INT', 'EXT', 'INT/EXT'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+              </TextField>
+            </Box>
+            <Box data-edit-field="location">
+              <TextField fullWidth label="地点" value={selectedScene.location} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'location', event.target.value, reasonDraft)} />
+            </Box>
+            <Box data-edit-field="dayNight">
+              <TextField fullWidth select label="日夜" value={selectedScene.dayNight} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'dayNight', event.target.value, reasonDraft)}>
+                {dayNightOptions.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+              </TextField>
+            </Box>
+            <Box data-edit-field="storyTime">
+              <TextField fullWidth label="故事时间" value={selectedScene.storyTime} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'storyTime', event.target.value, reasonDraft)} />
+            </Box>
+            <Box data-edit-field="pageLength">
+              <TextField fullWidth type="number" label="页数" value={selectedScene.pageLength} disabled={locked} inputProps={{ step: 0.25, min: 0 }} onChange={(event) => store.updateScene(selectedScene.id, 'pageLength', Number(event.target.value), reasonDraft)} />
+            </Box>
+            <Box data-edit-field="status">
+              <TextField fullWidth select label="场次状态" value={selectedScene.status} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'status', event.target.value as Scene['status'], reasonDraft)}>
+                <MenuItem value="draft">草稿</MenuItem>
+                <MenuItem value="review">待审</MenuItem>
+                <MenuItem value="locked">锁定</MenuItem>
+              </TextField>
+            </Box>
+            <Box data-edit-field="revision">
+              <TextField fullWidth select label="修订颜色" value={selectedScene.revision} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'revision', event.target.value as RevisionColor, reasonDraft)}>
+                {revisionOptions.map((option) => <MenuItem key={option.value} value={option.value}><span className={`revision-swatch revision-${option.value}`} />{option.label}</MenuItem>)}
+              </TextField>
+            </Box>
+            <Box className="span-2" data-edit-field="synopsis">
+              <TextField fullWidth multiline minRows={3} label="场景摘要" value={selectedScene.synopsis} disabled={locked} onChange={(event) => store.updateScene(selectedScene.id, 'synopsis', event.target.value, reasonDraft)} />
+            </Box>
           </Box>
         </Paper>
 
@@ -270,7 +343,7 @@ export default function App() {
             <Box><Typography variant="h6">出场关系</Typography><Typography variant="body2" color="text.secondary">勾选本场出现的角色和道具，服装直接绑定到角色。</Typography></Box>
           </Stack>
           <Box className="relation-grid">
-            <Box>
+            <Box data-edit-field="characterIds">
               <Typography className="section-label">角色</Typography>
               <Box className="chip-selector">
                 {state.script.characters.map((character) => (
@@ -279,12 +352,12 @@ export default function App() {
                     label={`${character.name} / ${character.actor}`}
                     color={selectedScene.characterIds.includes(character.id) ? 'primary' : 'default'}
                     variant={selectedScene.characterIds.includes(character.id) ? 'filled' : 'outlined'}
-                    onClick={() => !locked && store.toggleSceneRelation(selectedScene.id, 'characterIds', character.id)}
+                    onClick={() => !locked && store.toggleSceneRelation(selectedScene.id, 'characterIds', character.id, reasonDraft)}
                   />
                 ))}
               </Box>
             </Box>
-            <Box>
+            <Box data-edit-field="propIds">
               <Typography className="section-label">道具</Typography>
               <Box className="chip-selector">
                 {state.script.props.map((prop) => (
@@ -293,14 +366,14 @@ export default function App() {
                     label={prop.name}
                     color={selectedScene.propIds.includes(prop.id) ? 'secondary' : 'default'}
                     variant={selectedScene.propIds.includes(prop.id) ? 'filled' : 'outlined'}
-                    onClick={() => !locked && store.toggleSceneRelation(selectedScene.id, 'propIds', prop.id)}
+                    onClick={() => !locked && store.toggleSceneRelation(selectedScene.id, 'propIds', prop.id, reasonDraft)}
                   />
                 ))}
               </Box>
             </Box>
           </Box>
           {selectedScene.characterIds.length > 0 && (
-            <Box className="costume-grid">
+            <Box className="costume-grid" data-edit-field="costumes">
               {selectedScene.characterIds.map((characterId) => {
                 const character = state.script.characters.find((item) => item.id === characterId)
                 const options = state.script.wardrobes.filter((wardrobe) => wardrobe.characterId === characterId)
@@ -311,7 +384,7 @@ export default function App() {
                     label={`${character?.name ?? '角色'}服装`}
                     value={selectedScene.costumes[characterId] ?? ''}
                     disabled={locked}
-                    onChange={(event) => store.setCostume(selectedScene.id, characterId, event.target.value)}
+                    onChange={(event) => store.setCostume(selectedScene.id, characterId, event.target.value, reasonDraft)}
                   >
                     <MenuItem value="">未指定</MenuItem>
                     {options.map((wardrobe) => <MenuItem key={wardrobe.id} value={wardrobe.id}>{wardrobe.name} · {wardrobe.timePeriods.join('/')}</MenuItem>)}
@@ -320,6 +393,74 @@ export default function App() {
               })}
             </Box>
           )}
+        </Paper>
+
+        <Paper className="editor-paper edit-history" elevation={0}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+            <Box>
+              <Typography variant="h6" className="edit-history-title">
+                <History fontSize="small" sx={{ mr: .8, verticalAlign: -3 }} />
+                编辑记录
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                一次改动多个字段合并为一条；先写本轮原因再改字段，完成本轮或切换场次后归档。共 {sceneEdits.length} 条。
+              </Typography>
+            </Box>
+            {openEdit && <Chip size="small" color="warning" label="本轮记录进行中" />}
+          </Stack>
+
+          <Box className="edit-composer" data-edit-field="reason">
+            <TextField
+              fullWidth
+              multiline
+              minRows={1}
+              maxRows={3}
+              label="本轮修改原因"
+              placeholder="例如：第三稿要求苏遥改为主动出场，因此调整场名、道具与服装…"
+              value={reasonDraft}
+              disabled={locked}
+              onChange={(event) => setSceneReason(event.target.value)}
+            />
+            {openEdit ? (
+              <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} mt={1} flexWrap="wrap">
+                <Typography variant="caption" color="text.secondary">
+                  已并入 {openEdit.changes.length} 项改动 · {formatTime(openEdit.createdAt)} 开始 · 作者 {openEdit.author}
+                </Typography>
+                <Button size="small" variant="contained" startIcon={<Check />} onClick={finishSceneEdit}>完成本轮</Button>
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary" mt={0.6} display="block">
+                未填原因直接改字段也会记录，归档时标记为“未填写原因”。切换场次会自动完成本轮。
+              </Typography>
+            )}
+          </Box>
+
+          {openEdit && (
+            <Box className="change-list open">
+              {openEdit.changes.map((change) => <ChangeChip key={`${change.field}-${change.targetKey ?? ''}`} change={change} onJump={jumpToField} />)}
+            </Box>
+          )}
+
+          {selectedScene.reason && !openEdit && (
+            <Typography variant="body2" className="latest-reason">
+              上轮修改理由：{selectedScene.reason}
+            </Typography>
+          )}
+
+          <Box className="edit-entry-list">
+            {sceneEdits.filter((entry) => !entry.open).map((entry) => (
+              <Box key={entry.id} className="edit-entry">
+                <Box className="edit-entry-head">
+                  <span className="edit-entry-reason">{entry.reason || '（未填写原因）'}</span>
+                  <small>{formatTime(entry.updatedAt)} · {entry.author} · {entry.changes.length} 项</small>
+                </Box>
+                <Box className="change-list">
+                  {entry.changes.map((change) => <ChangeChip key={`${change.field}-${change.targetKey ?? ''}`} change={change} onJump={jumpToField} />)}
+                </Box>
+              </Box>
+            ))}
+            {!sceneEdits.length && <Typography color="text.secondary" variant="body2" mt={1}>本场还没有编辑记录。</Typography>}
+          </Box>
         </Paper>
       </Box>
     )
@@ -431,6 +572,7 @@ export default function App() {
                   <Box>
                     <Typography fontWeight={700}>{version.name}</Typography>
                     <Typography variant="caption" color="text.secondary">{new Date(version.createdAt).toLocaleString('zh-CN')}</Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">含 {version.script.sceneEdits?.length ?? 0} 条场次编辑记录</Typography>
                   </Box>
                 </ListItemButton>
               ))}
@@ -507,7 +649,7 @@ export default function App() {
       <Box className="scene-rail">
         <IconButton size="small" onClick={() => {
           const index = state.script.scenes.findIndex((scene) => scene.id === selectedScene?.id)
-          if (state.script.scenes[index - 1]) setSelectedSceneId(state.script.scenes[index - 1].id)
+          if (state.script.scenes[index - 1]) openScene(state.script.scenes[index - 1].id)
         }}><NavigateBefore /></IconButton>
         <Stack direction="row" gap={1} className="scene-rail-list">
           {state.script.scenes.map((scene) => (
@@ -518,7 +660,7 @@ export default function App() {
         </Stack>
         <IconButton size="small" onClick={() => {
           const index = state.script.scenes.findIndex((scene) => scene.id === selectedScene?.id)
-          if (state.script.scenes[index + 1]) setSelectedSceneId(state.script.scenes[index + 1].id)
+          if (state.script.scenes[index + 1]) openScene(state.script.scenes[index + 1].id)
         }}><NavigateNext /></IconButton>
       </Box>
 
@@ -651,7 +793,7 @@ export default function App() {
       <Dialog open={versionDialog} onClose={() => setVersionDialog(false)} fullWidth maxWidth="sm">
         <DialogTitle>保存剧本版本</DialogTitle>
         <DialogContent>
-          <Typography color="text.secondary" mb={2}>版本会保存当前全部场景、资料库和审阅备注的快照，之后可与工作稿比较或恢复。</Typography>
+          <Typography color="text.secondary" mb={2}>版本会保存当前全部场景、资料库、审阅备注与场次编辑记录的快照，之后可与工作稿比较或恢复；恢复旧版后只看得到该版本已有的编辑记录。</Typography>
           <TextField autoFocus fullWidth label="版本名称" value={versionName} onChange={(event) => setVersionName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') createVersion() }} />
         </DialogContent>
         <DialogActions><Button onClick={() => setVersionDialog(false)}>取消</Button><Button variant="contained" onClick={createVersion}>保存</Button></DialogActions>

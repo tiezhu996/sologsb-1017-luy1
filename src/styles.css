@@ -88,6 +88,31 @@ mark { padding: 0 .1em; color: #3a2414; background: #f1d486; border-radius: 2px;
 .drawer-content { padding: 18px 22px; }
 .library-card { display: grid; gap: 12px; padding: 15px; border: 1px solid #ddd3c5 !important; border-radius: 11px !important; }
 .timeline-card { grid-template-columns: minmax(150px, 1.2fr) 1fr 120px auto; align-items: center; }
+
+/* 场次编辑记录 */
+.edit-history-title { display: flex; align-items: center; }
+.edit-composer { margin-top: 16px; padding: 12px 14px; border: 1px dashed #cbb9a2; border-radius: 10px; background: #f7f1e7; transition: box-shadow .25s ease; }
+.latest-reason { margin-top: 12px; color: #765033; }
+.change-list { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }
+.change-chip { display: inline-flex; align-items: baseline; gap: 7px; max-width: 100%; padding: 4px 10px; border: 1px solid #d8c9b5; border-radius: 999px; color: #5f5448; background: #fbf8f2; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.change-chip:hover { border-color: #ad8668; background: #f5ecdf; }
+.change-chip-label { font-size: 11px; font-weight: 750; color: #9a7d62; white-space: nowrap; }
+.change-chip-values { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 12px; }
+.change-before { color: #98463e; text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.change-after { color: #2f6f67; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.change-arrow { color: #91877c; }
+.change-list.open .change-chip { border-style: solid; background: #fffaf0; }
+.edit-entry-list { display: grid; gap: 10px; margin-top: 16px; }
+.edit-entry { padding: 11px 13px; border: 1px solid #e1d9cd; border-radius: 10px; background: #faf7f0; }
+.edit-entry-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.edit-entry-reason { color: #40322a; font-size: 13px; font-weight: 680; }
+.edit-entry-head small { color: #958b80; font-size: 11px; white-space: nowrap; }
+.field-flash { animation: field-flash 1.6s ease 0s 1; }
+@keyframes field-flash {
+  0% { box-shadow: 0 0 0 0 rgba(123,75,42,0); }
+  18% { box-shadow: 0 0 0 3px rgba(123,75,42,.55), 0 6px 22px rgba(123,75,42,.14); }
+  100% { box-shadow: 0 0 0 0 rgba(123,75,42,0); }
+}
 .shortcut-grid { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: center; }
 kbd { padding: 5px 8px; color: #fdf9f1; border-radius: 5px; background: #44382e; font: 600 12px/1.2 ui-monospace, monospace; }
 @media (max-width: 1050px) {

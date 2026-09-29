@@ -44,6 +44,43 @@ export interface Scene {
   reason: string
 }
 
+export type SceneEditField =
+  | 'number'
+  | 'slug'
+  | 'synopsis'
+  | 'intExt'
+  | 'location'
+  | 'dayNight'
+  | 'storyTime'
+  | 'pageLength'
+  | 'revision'
+  | 'status'
+  | 'characterIds'
+  | 'propIds'
+  | 'costumes'
+  | 'order'
+
+export interface SceneEditChange {
+  field: SceneEditField
+  /** 多值字段下区分具体角色/道具/服装，例如角色 id。 */
+  targetKey?: string
+  before: string
+  after: string
+}
+
+export interface SceneEditEntry {
+  id: string
+  sceneId: string
+  /** 记录时刻的场号快照，场次删除后仍可辨认。 */
+  sceneNumber: string
+  createdAt: string
+  updatedAt: string
+  author: string
+  reason: string
+  open: boolean
+  changes: SceneEditChange[]
+}
+
 export interface Script {
   title: string
   writer: string
@@ -52,6 +89,7 @@ export interface Script {
   characters: Character[]
   props: Prop[]
   wardrobes: Wardrobe[]
+  sceneEdits: SceneEditEntry[]
 }
 
 export interface WarningItem {

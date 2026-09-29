@@ -1,22 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sampleScript } from './sample'
-import type { Character, ContinuityState, DiffItem, Prop, Reply, Scene, Script, Version, Wardrobe, WarningItem, WarningReview } from './types'
+import { applySceneChanges, closeOpenEdits, closeSceneEdits, diffScene } from './history'
+import type { Character, ContinuityState, DiffItem, Prop, Scene, Script, Version, Wardrobe, WarningItem, WarningReview } from './types'
 
 const STORAGE_KEY = 'sologsb-1017-continuity-v1'
 const clone = <T,>(value: T): T => structuredClone(value)
 const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+const touch = () => new Date().toISOString()
+
+function normalizeScript(raw: Partial<Script> | undefined): Script {
+  const script = raw as Script
+  if (!Array.isArray(script.sceneEdits)) script.sceneEdits = []
+  return script
+}
 
 function initialState(): ContinuityState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as ContinuityState
-      if (parsed.script?.scenes?.length) return parsed
+      if (parsed.script?.scenes?.length) {
+        normalizeScript(parsed.script)
+        parsed.versions?.forEach((version) => normalizeScript(version.script))
+        return parsed
+      }
     }
   } catch {
     // Ignore an invalid local draft and restore the bundled example.
   }
-  return { script: clone(sampleScript), reviews: {}, versions: [], updatedAt: new Date().toISOString() }
+  return { script: clone(sampleScript), reviews: {}, versions: [], updatedAt: touch() }
 }
 
 export function deriveWarnings(script: Script): WarningItem[] {
@@ -138,9 +150,12 @@ export function diffScript(base: Script, current: Script): DiffItem[] {
 export function useContinuityStore() {
   const [state, setState] = useState<ContinuityState>(initialState)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved')
+  const stateRef = useRef(state)
   const undoRef = useRef<Script[]>([])
   const redoRef = useRef<Script[]>([])
   const saveTimer = useRef<number | undefined>(undefined)
+
+  useEffect(() => { stateRef.current = state }, [state])
 
   useEffect(() => {
     setSaveStatus('saving')
@@ -152,73 +167,118 @@ export function useContinuityStore() {
     return () => window.clearTimeout(saveTimer.current)
   }, [state])
 
-  const mutate = useCallback((mutator: (script: Script) => void) => {
-    setState((previous) => {
-      const next = clone(previous.script)
-      mutator(next)
-      undoRef.current.push(clone(previous.script))
-      if (undoRef.current.length > 80) undoRef.current.shift()
-      redoRef.current = []
-      return { ...previous, script: next, updatedAt: new Date().toISOString() }
-    })
+  /** 进入撤销栈的修改：基于 ref 同步计算，避免开发环境 StrictMode 双调用污染历史。 */
+  const commit = useCallback((updater: (previous: ContinuityState) => ContinuityState) => {
+    const previous = stateRef.current
+    const next = updater(previous)
+    if (next === previous) return
+    undoRef.current.push(clone(previous.script))
+    if (undoRef.current.length > 80) undoRef.current.shift()
+    redoRef.current = []
+    stateRef.current = next
+    setState(next)
   }, [])
 
-  const undo = useCallback(() => {
-    setState((previous) => {
-      const target = undoRef.current.pop()
-      if (!target) return previous
-      redoRef.current.push(clone(previous.script))
-      return { ...previous, script: target, updatedAt: new Date().toISOString() }
+  /** 不进撤销栈的修改（编辑原因、记录归档等），靠整稿快照与撤销重做保持同步。 */
+  const patch = useCallback((updater: (previous: ContinuityState) => ContinuityState) => {
+    const previous = stateRef.current
+    const next = updater(previous)
+    if (next === previous) return
+    stateRef.current = next
+    setState(next)
+  }, [])
+
+  const mutate = useCallback((mutator: (script: Script) => void) => {
+    commit((previous) => {
+      const script = clone(previous.script)
+      mutator(script)
+      return { ...previous, script, updatedAt: touch() }
     })
+  }, [commit])
+
+  const undo = useCallback(() => {
+    const previous = stateRef.current
+    const target = undoRef.current.pop()
+    if (!target) return
+    redoRef.current.push(clone(previous.script))
+    const next = { ...previous, script: target, updatedAt: touch() }
+    stateRef.current = next
+    setState(next)
   }, [])
 
   const redo = useCallback(() => {
-    setState((previous) => {
-      const target = redoRef.current.pop()
-      if (!target) return previous
-      undoRef.current.push(clone(previous.script))
-      return { ...previous, script: target, updatedAt: new Date().toISOString() }
-    })
+    const previous = stateRef.current
+    const target = redoRef.current.pop()
+    if (!target) return
+    undoRef.current.push(clone(previous.script))
+    const next = { ...previous, script: target, updatedAt: touch() }
+    stateRef.current = next
+    setState(next)
   }, [])
 
   const updateScriptField = useCallback((field: 'title' | 'writer' | 'draft', value: string) => {
     mutate((script) => { script[field] = value })
   }, [mutate])
 
-  const updateScene = useCallback((sceneId: string, field: keyof Scene, value: Scene[keyof Scene]) => {
-    mutate((script) => {
+  /** 场次字段改动：对比改前改后写入同一条编辑记录，值没变不进撤销栈。 */
+  const commitScene = useCallback((sceneId: string, reason: string, mutator: (script: Script) => void) => {
+    commit((previous) => {
+      const beforeScene = previous.script.scenes.find((scene) => scene.id === sceneId)
+      if (!beforeScene) return previous
+      const script = clone(previous.script)
+      mutator(script)
+      const afterScene = script.scenes.find((scene) => scene.id === sceneId)
+      if (!afterScene) return previous
+      const changes = diffScene(beforeScene, afterScene, script)
+      if (!changes.length) return previous
+      if (!applySceneChanges(script, sceneId, changes, reason, script.writer)) return previous
+      return { ...previous, script, updatedAt: touch() }
+    })
+  }, [commit])
+
+  const updateScene = useCallback((sceneId: string, field: keyof Scene, value: Scene[keyof Scene], reason = '') => {
+    commitScene(sceneId, reason, (script) => {
       const scene = script.scenes.find((item) => item.id === sceneId)
       if (scene) (scene as unknown as Record<string, unknown>)[field] = value
     })
-  }, [mutate])
+  }, [commitScene])
 
-  const toggleSceneRelation = useCallback((sceneId: string, field: 'characterIds' | 'propIds', itemId: string) => {
-    mutate((script) => {
+  const toggleSceneRelation = useCallback((sceneId: string, field: 'characterIds' | 'propIds', itemId: string, reason = '') => {
+    commitScene(sceneId, reason, (script) => {
       const scene = script.scenes.find((item) => item.id === sceneId)
       if (!scene) return
       const values = scene[field]
       scene[field] = values.includes(itemId) ? values.filter((value) => value !== itemId) : [...values, itemId]
     })
-  }, [mutate])
+  }, [commitScene])
 
-  const setCostume = useCallback((sceneId: string, characterId: string, wardrobeId: string) => {
-    mutate((script) => {
+  const setCostume = useCallback((sceneId: string, characterId: string, wardrobeId: string, reason = '') => {
+    commitScene(sceneId, reason, (script) => {
       const scene = script.scenes.find((item) => item.id === sceneId)
       if (!scene) return
       if (!wardrobeId) delete scene.costumes[characterId]
       else scene.costumes[characterId] = wardrobeId
     })
-  }, [mutate])
+  }, [commitScene])
 
-  const moveScene = useCallback((sceneId: string, direction: -1 | 1) => {
-    mutate((script) => {
-      const index = script.scenes.findIndex((scene) => scene.id === sceneId)
+  const moveScene = useCallback((sceneId: string, direction: -1 | 1, reason = '') => {
+    commit((previous) => {
+      const index = previous.script.scenes.findIndex((scene) => scene.id === sceneId)
       const target = index + direction
-      if (index < 0 || target < 0 || target >= script.scenes.length) return
-      const [scene] = script.scenes.splice(index, 1)
-      script.scenes.splice(target, 0, scene)
+      if (index < 0 || target < 0 || target >= previous.script.scenes.length) return previous
+      const script = clone(previous.script)
+      const [moved] = script.scenes.splice(index, 1)
+      script.scenes.splice(target, 0, moved)
+      applySceneChanges(
+        script,
+        sceneId,
+        [{ field: 'order', before: `第 ${index + 1} 位`, after: `第 ${target + 1} 位` }],
+        reason,
+        script.writer
+      )
+      return { ...previous, script, updatedAt: touch() }
     })
-  }, [mutate])
+  }, [commit])
 
   const addScene = useCallback(() => {
     const sceneId = id('scene')
@@ -233,9 +293,36 @@ export function useContinuityStore() {
   }, [mutate])
 
   const deleteScene = useCallback((sceneId: string) => {
-    if (state.script.scenes.length <= 1) return
-    mutate((script) => { script.scenes = script.scenes.filter((scene) => scene.id !== sceneId) })
-  }, [mutate, state.script.scenes.length])
+    commit((previous) => {
+      if (previous.script.scenes.length <= 1) return previous
+      const script = clone(previous.script)
+      script.scenes = script.scenes.filter((scene) => scene.id !== sceneId)
+      // 未完成的一轮随场次删除一并丢弃；已归档记录保留在剧本数据中。
+      script.sceneEdits = script.sceneEdits.filter((entry) => !(entry.open && entry.sceneId === sceneId))
+      return { ...previous, script, updatedAt: touch() }
+    })
+  }, [commit])
+
+  /** 正在填写的本轮原因：只更新打开中的记录，不进撤销栈。 */
+  const setEditReason = useCallback((sceneId: string, reason: string) => {
+    patch((previous) => {
+      if (!previous.script.sceneEdits.some((entry) => entry.open && entry.sceneId === sceneId)) return previous
+      const script = clone(previous.script)
+      const entry = script.sceneEdits.find((item) => item.open && item.sceneId === sceneId)
+      if (entry) entry.reason = reason
+      return { ...previous, script }
+    })
+  }, [patch])
+
+  /** 完成本场本轮修改：归档记录并把原因同步到场次“修改理由”。 */
+  const finalizeSceneEdit = useCallback((sceneId: string) => {
+    patch((previous) => {
+      if (!previous.script.sceneEdits.some((entry) => entry.open && entry.sceneId === sceneId)) return previous
+      const script = clone(previous.script)
+      closeSceneEdits(script, sceneId)
+      return { ...previous, script, updatedAt: touch() }
+    })
+  }, [patch])
 
   const addCharacter = useCallback(() => {
     mutate((script) => {
@@ -286,13 +373,13 @@ export function useContinuityStore() {
         ...previous.reviews,
         [warningId]: { ...(previous.reviews[warningId] ?? { replies: [] }), status }
       },
-      updatedAt: new Date().toISOString()
+      updatedAt: touch()
     }))
   }, [])
 
   const addReply = useCallback((warningId: string, author: string, text: string) => {
     if (!text.trim()) return
-    const reply: Reply = { id: id('reply'), author, text: text.trim(), createdAt: new Date().toISOString() }
+    const reply = { id: id('reply'), author, text: text.trim(), createdAt: touch() }
     setState((previous) => ({
       ...previous,
       reviews: {
@@ -302,26 +389,40 @@ export function useContinuityStore() {
           replies: [...(previous.reviews[warningId]?.replies ?? []), reply]
         }
       },
-      updatedAt: new Date().toISOString()
+      updatedAt: touch()
     }))
   }, [])
 
   const createVersion = useCallback((name: string) => {
-    const version: Version = { id: id('version'), name: name.trim() || `版本 ${state.versions.length + 1}`, createdAt: new Date().toISOString(), script: clone(state.script) }
-    setState((previous) => ({ ...previous, versions: [version, ...previous.versions] }))
+    const previous = stateRef.current
+    // 快照先归档未完成记录，使保存下来的版本只含已经成形的编辑历史。
+    const script = clone(previous.script)
+    closeOpenEdits(script)
+    const version: Version = {
+      id: id('version'),
+      name: name.trim() || `版本 ${previous.versions.length + 1}`,
+      createdAt: touch(),
+      script
+    }
+    const next = { ...previous, script, versions: [version, ...previous.versions] }
+    stateRef.current = next
+    setState(next)
     return version
-  }, [state.script, state.versions.length])
+  }, [])
 
   const restoreVersion = useCallback((versionId: string) => {
-    const version = state.versions.find((item) => item.id === versionId)
-    if (!version) return
-    mutate((script) => { Object.assign(script, clone(version.script)) })
-  }, [mutate, state.versions])
+    commit((previous) => {
+      const version = previous.versions.find((item) => item.id === versionId)
+      if (!version) return previous
+      // 整稿（连同该版本自带的编辑记录）换回；恢复后只看得到那版已有的记录。
+      const script = normalizeScript(clone(version.script))
+      return { ...previous, script, updatedAt: touch() }
+    })
+  }, [commit])
 
   const reset = useCallback(() => {
-    mutate((script) => { Object.assign(script, clone(sampleScript)) })
-    setState((previous) => ({ ...previous, reviews: {} }))
-  }, [mutate])
+    commit((previous) => ({ ...previous, script: clone(sampleScript), reviews: {}, updatedAt: touch() }))
+  }, [commit])
 
   return {
     state,
@@ -334,6 +435,8 @@ export function useContinuityStore() {
     moveScene,
     addScene,
     deleteScene,
+    setEditReason,
+    finalizeSceneEdit,
     addCharacter,
     updateCharacter,
     addProp,
